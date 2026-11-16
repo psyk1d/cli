@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Template Maker</title>
+<style>
+  :root { --bg:#f6f6f7; --card:#fff; --ink:#111; --mute:#6b6b6b; --line:#e2e2e5; --acc:#111; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 32px 20px 60px; display:grid; grid-template-columns: 1fr 340px; gap: 28px; align-items:start; }
+  @media (max-width: 820px) { .wrap { grid-template-columns: 1fr; } }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 22px; color: var(--mute); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  label { display:block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
+  h1 + p + label { margin-top: 0; }
+  input[type=text], input[type=number], select, textarea { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; font: inherit; background:#fff; }
+  textarea { resize: vertical; min-height: 70px; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 26px; text-align:center; color: var(--mute); cursor:pointer; font-size: 14px; word-break: break-all; }
+  .drop.on { border-color: var(--acc); color: var(--ink); background:#fafafa; }
+  .row { display:flex; gap:12px; }
+  .row > * { flex:1; }
+  button { width:100%; margin-top: 22px; padding: 13px; border:0; border-radius: 10px; background: var(--acc); color:#fff; font: inherit; font-weight: 600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .hint { font-size:12px; color:var(--mute); margin-top:5px; }
+  .preview { position: sticky; top: 20px; }
+  .preview h2 { font-size: 14px; margin: 0 0 12px; }
+  .stage canvas, .stage video { width: 100%; border-radius: 10px; background:#fff; border:1px solid var(--line); aspect-ratio: 9/16; display:block; }
+  .empty { aspect-ratio: 9/16; border:1px solid var(--line); border-radius:10px; display:grid; place-items:center; color:var(--mute); font-size:13px; text-align:center; padding:20px; }
+  .bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:12px; display:none; }
+  .bar > i { display:block; height:100%; width:0; background:var(--acc); }
+  .err { color:#b00020; font-size:13px; margin-top:12px; white-space: pre-wrap; }
+  .msg { font-size:13px; color:var(--mute); margin-top:10px; }
+  a.dl { display:block; text-align:center; margin-top:12px; padding:11px; border-radius:10px; border:1px solid var(--ink); color:var(--ink); text-decoration:none; font-weight:600; font-size:14px; }
+  .linkbtn { background:none; border:0; color:var(--mute); text-decoration:underline; width:auto; margin:6px 0 0; padding:0; font-size:12px; font-weight:400; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <form id="f" class="card">
+    <h1>Video Template Maker</h1>
+    <p class="sub">White template, hook on top, your logo below. Runs fully in your browser.</p>
+
+    <label>Video</label>
+    <div class="drop" id="drop">Drop a video here or click to choose</div>
+    <input type="file" id="video" accept="video/*" hidden>
+
+    <label>Hook / caption</label>
+    <textarea id="hook" placeholder="Watching the GTA 6 trailer and you realize..."></textarea>
+
+    <label>Logo</label>
+    <select id="savedLogo"></select>
+    <div class="hint">Or upload a new one (it is remembered in this browser):</div>
+    <input type="file" id="logoFile" accept="image/*" style="margin-top:6px">
+    <button type="button" class="linkbtn" id="delLogo">Delete selected saved logo</button>
+
+    <div class="row">
+      <div>
+        <label>Logo position</label>
+        <select id="logoPos">
+          <option value="center">Center</option>
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+        </select>
+      </div>
+      <div>
+        <label>Logo width (px)</label>
+        <input type="number" id="logoWidth" value="200" min="60" max="600">
+      </div>
+    </div>
+
+    <label>Brand handle (optional)</label>
+    <input type="text" id="handle" placeholder="@mychannel">
+
+    <button id="go" type="submit">Create video</button>
+    <div class="bar" id="bar"><i></i></div>
+    <div class="msg" id="msg"></div>
+    <div class="err" id="err"></div>
+  </form>
+
+  <aside class="preview card">
+    <h2>Preview / Result</h2>
+    <div class="stage" id="stage"><div class="empty">Choose a video to see the layout</div></div>
+  </aside>
+</div>
+
+<script>
+const W = 1080, H = 1920, SIDE = 60, GAP = 40, LOGO_ZONE = 220;
+const FONT = 'Inter, "Helvetica Neue", Helvetica, Arial, sans-serif';
+
+const $ = id => document.getElementById(id);
+const f = $('f'), go = $('go'), err = $('err'), msg = $('msg'), stage = $('stage');
+const drop = $('drop'), vidInput = $('video'), bar = $('bar');
+
+let videoFile = null, videoDims = null, logoImg = null;
+
+/* ---------- saved logos (kept in this browser only) ---------- */
+function loadSaved() { try { return JSON.parse(localStorage.getItem('logos') || '[]'); } catch { return []; } }
+function storeSaved(list) { try { localStorage.setItem('logos', JSON.stringify(list)); return true; } catch { return false; } }
+function refreshLogoSelect(selectName) {
+  const sel = $('savedLogo'), list = loadSaved();
+  sel.innerHTML = '<option value="">No logo</option>' + list.map(l => `<option value="${l.name.replace(/"/g,'&quot;')}">${l.name.replace(/</g,'&lt;')}</option>`).join('');
+  if (selectName) sel.value = selectName;
+  $('delLogo').style.display = list.length ? '' : 'none';
+}
+function loadImage(src) {
+  return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+}
+async function pickLogo() {
+  const name = $('savedLogo').value;
+  const item = loadSaved().find(l => l.name === name);
+  logoImg = item ? await loadImage(item.data) : null;
+  drawPreview();
+}
+$('savedLogo').onchange = pickLogo;
+$('delLogo').onclick = () => {
+  const name = $('savedLogo').value; if (!name) return;
+  storeSaved(loadSaved().filter(l => l.name !== name));
+  refreshLogoSelect(); pickLogo();
+};
+$('logoFile').onchange = async e => {
+  const file = e.target.files[0]; if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = await loadImage(url);
+  // shrink before saving so browser storage does not fill up
+  const scale = Math.min(1, 600 / img.width);
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const data = c.toDataURL('image/png');
+  const list = loadSaved().filter(l => l.name !== file.name);
+  list.push({ name: file.name, data });
+  if (!storeSaved(list)) msg.textContent = 'Logo used for this video but could not be saved (browser storage full).';
+  refreshLogoSelect(file.name);
+  logoImg = await loadImage(data);
+  e.target.value = '';
+  drawPreview();
+};
+
+/* ---------- video choice ---------- */
+drop.onclick = () => vidInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
+drop.ondragleave = () => drop.classList.remove('on');
+drop.ondrop = e => { e.preventDefault(); if (e.dataTransfer.files[0]) setVideo(e.dataTransfer.files[0]); };
+vidInput.onchange = () => { if (vidInput.files[0]) setVideo(vidInput.files[0]); };
+
+function setVideo(file) {
+  videoFile = file;
+  drop.textContent = file.name; drop.classList.add('on');
+  const v = document.createElement('video');
+  v.preload = 'metadata'; v.muted = true;
+  v.onloadedmetadata = () => { videoDims = { w: v.videoWidth, h: v.videoHeight }; URL.revokeObjectURL(v.src); drawPreview(); };
+  v.onerror = () => { err.textContent = 'This browser cannot read that video. Try an MP4 (H.264) file.'; };
+  v.src = URL.createObjectURL(file);
+}
+
+/* ---------- template drawing ---------- */
+function wrapText(ctx, text, maxW) {
+  const lines = []; let cur = '';
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const t = cur ? cur + ' ' + word : word;
+    if (ctx.measureText(t).width <= maxW) cur = t; else { if (cur) lines.push(cur); cur = word; }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function buildTemplate(dims) {
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+
+  let vh = Math.round(dims.h * W / dims.w / 2) * 2;
+  if (vh > 1000) vh = 1000;
+  const blockH = vh + GAP + LOGO_ZONE;
+  const topZone = Math.max(H - blockH - 120, 300);
+  const vy = topZone;
+
+  // hook (bottom-aligned just above the video, auto-shrinks to fit 3 lines)
+  const hook = ($('hook').value || '').trim() || 'Your hook goes here...';
+  ctx.fillStyle = '#000'; ctx.textBaseline = 'top';
+  let size = 72, lines = [], lineH = 0;
+  for (; size >= 34; size -= 2) {
+    ctx.font = `800 ${size}px ${FONT}`;
+    lines = wrapText(ctx, hook, W - 2 * SIDE);
+    lineH = Math.round(size * 1.25);
+    if (lines.length <= 3 && lines.length * lineH <= topZone - 80) break;
+  }
+  let y = vy - 40 - lines.length * lineH;
+  for (const ln of lines) { ctx.fillText(ln, SIDE, y); y += lineH; }
+
+  // logo + handle
+  const logoY = vy + vh + GAP;
+  const handle = $('handle').value.trim();
+  const pos = $('logoPos').value;
+  const hFont = `700 34px ${FONT}`;
+  if (logoImg) {
+    let lw = Math.max(60, Math.min(+$('logoWidth').value || 200, 600));
+    let lh = logoImg.height * lw / logoImg.width;
+    if (lh > LOGO_ZONE - 20) { lh = LOGO_ZONE - 20; lw = logoImg.width * lh / logoImg.height; }
+    ctx.font = hFont;
+    const hw = handle ? ctx.measureText(handle).width : 0;
+    const spacing = handle ? 24 : 0;
+    const total = lw + spacing + hw;
+    const x = pos === 'left' ? SIDE : pos === 'right' ? W - SIDE - total : (W - total) / 2;
+    const ly = logoY + (LOGO_ZONE - lh) / 2;
+    ctx.drawImage(logoImg, x, ly, lw, lh);
+    if (handle) { ctx.fillStyle = '#6e6e6e'; ctx.textBaseline = 'middle'; ctx.fillText(handle, x + lw + spacing, ly + lh / 2); }
+  } else if (handle) {
+    ctx.font = `700 40px ${FONT}`; ctx.fillStyle = '#6e6e6e'; ctx.textBaseline = 'middle';
+    ctx.fillText(handle, (W - ctx.measureText(handle).width) / 2, logoY + LOGO_ZONE / 2);
+  }
+  return { canvas: c, vx: 0, vy, vw: W, vh };
+}
+
+function drawVideoFrame(ctx, v, t) {
+  const s = Math.min(t.vw / v.videoWidth, t.vh / v.videoHeight);
+  const dw = v.videoWidth * s, dh = v.videoHeight * s;
+  ctx.drawImage(v, t.vx + (t.vw - dw) / 2, t.vy + (t.vh - dh) / 2, dw, dh);
+}
+
+function drawPreview() {
+  if (!videoDims || recording) return;
+  const t = buildTemplate(videoDims);
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(t.canvas, 0, 0);
+  ctx.fillStyle = '#d8d8dc'; ctx.fillRect(t.vx, t.vy, t.vw, t.vh);
+  ctx.fillStyle = '#8a8a90'; ctx.font = `600 40px ${FONT}`; ctx.textBaseline = 'middle';
+  const label = 'your video'; ctx.fillText(label, (W - ctx.measureText(label).width) / 2, t.vy + t.vh / 2);
+  stage.innerHTML = ''; stage.appendChild(c);
+}
+['hook', 'handle', 'logoPos', 'logoWidth'].forEach(id => $(id).addEventListener('input', drawPreview));
+
+/* ---------- recording ---------- */
+let recording = false;
+
+function pickMime() {
+  const list = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  return list.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+}
+
+f.onsubmit = async e => {
+  e.preventDefault();
+  err.textContent = ''; msg.textContent = '';
+  if (!videoFile) { err.textContent = 'Please choose a video.'; return; }
+  if (!($('hook').value || '').trim()) { err.textContent = 'Please enter a hook.'; return; }
+  if (!window.MediaRecorder) { err.textContent = 'This browser does not support video recording. Use Chrome, Edge or Safari 16+.'; return; }
+
+  recording = true; go.disabled = true; go.textContent = 'Processing...';
+  bar.style.display = 'block'; bar.firstElementChild.style.width = '0%';
+  msg.textContent = 'Keep this tab open and visible until it finishes. It takes about as long as the video.';
+
+  try {
+    const url = await render();
+    const mime = pickMime();
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    stage.innerHTML = `<video controls autoplay loop playsinline src="${url}"></video>` +
+      `<a class="dl" href="${url}" download="template-video.${ext}">Download ${ext.toUpperCase()}</a>`;
+    msg.textContent = ext === 'webm' ? 'This browser saved WebM. Chrome/Edge on a recent version can save MP4 directly.' : '';
+  } catch (ex) {
+    err.textContent = ex.message || String(ex);
+    recording = false; drawPreview();
+  } finally {
+    recording = false; go.disabled = false; go.textContent = 'Create video'; bar.style.display = 'none';
+  }
+};
+
+function render() {
+  return new Promise(async (resolve, reject) => {
+    const t = buildTemplate(videoDims);
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const ctx = out.getContext('2d');
+    stage.innerHTML = ''; stage.appendChild(out);
+    ctx.drawImage(t.canvas, 0, 0);
+
+    const v = document.createElement('video');
+    v.playsInline = true; v.preload = 'auto';
+    v.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    document.body.appendChild(v);
+    const srcUrl = URL.createObjectURL(videoFile);
+    const cleanup = () => { v.pause(); v.remove(); URL.revokeObjectURL(srcUrl); };
+    v.src = srcUrl;
+    try { await new Promise((ok, no) => { v.onloadeddata = ok; v.onerror = () => no(new Error('Could not read this video. Try an MP4 (H.264).')); }); }
+    catch (x) { cleanup(); return reject(x); }
+
+    const stream = out.captureStream(30);
+    let ac = null;
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      await ac.resume();
+      const src = ac.createMediaElementSource(v);          // not connected to speakers, so it stays silent
+      const dest = ac.createMediaStreamDestination();
+      src.connect(dest);
+      dest.stream.getAudioTracks().forEach(tr => stream.addTrack(tr));
+    } catch (x) { /* no audio track available: continue without sound */ }
+
+    const mime = pickMime();
+    let rec;
+    try { rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : undefined); }
+    catch (x) { cleanup(); return reject(new Error('Could not start the recorder in this browser.')); }
+    const chunks = [];
+    rec.ondataavailable = ev => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    rec.onerror = () => { cleanup(); reject(new Error('Recording failed.')); };
+    rec.onstop = () => {
+      cleanup(); if (ac) ac.close();
+      const blob = new Blob(chunks, { type: mime || 'video/webm' });
+      resolve(URL.createObjectURL(blob));
+    };
+
+    let stopped = false;
+    const finish = () => {
+      if (stopped) return; stopped = true;
+      ctx.drawImage(t.canvas, 0, 0); drawVideoFrame(ctx, v, t);
+      setTimeout(() => rec.state !== 'inactive' && rec.stop(), 250);
+    };
+    const tick = () => {
+      if (stopped) return;
+      ctx.drawImage(t.canvas, 0, 0);
+      drawVideoFrame(ctx, v, t);
+      if (v.duration) bar.firstElementChild.style.width = Math.min(100, v.currentTime / v.duration * 100) + '%';
+      requestAnimationFrame(tick);
+    };
+    v.onended = finish;
+    rec.start(250);
+    try { v.currentTime = 0; await v.play(); }
+    catch (x) { cleanup(); return reject(new Error('The browser blocked playback. Click Create video again.')); }
+    requestAnimationFrame(tick);
+  });
+}
+
+refreshLogoSelect();
+</script>
+</body>
+</html>
